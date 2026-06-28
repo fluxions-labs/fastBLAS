@@ -15,13 +15,13 @@ void sgemm_naive(int M, int N, int K,
                  float beta,
                  float* C, int ldc)
 {
-    for (int i = 0; i < M; i++) {
-        for (int j = 0; j < N; j++) {
-            float sum = 0.0f;
-            for (int k = 0; k < K; k++) {
-                sum += A[i * lda + k] * B[k * ldb + j];
+    for(int i=0;i<M;i++){
+        for(int j=0;j<N;j++){
+            float sum=0.0f;
+            for(int k=0;k<K;k++){
+                sum+=A[i*lda+k]*B[k*ldb+j];
             }
-            C[i * ldc + j] = alpha * sum + beta * C[i * ldc + j];
+            C[i*ldc+j]=beta*C[i*ldc+j]+alpha*sum;
         }
     }
 }
