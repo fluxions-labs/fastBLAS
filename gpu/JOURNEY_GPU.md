@@ -1,51 +1,42 @@
-# wgpu-blas: The GPU GEMM Journey
+# The GEMM Journey — GPU
 
-You built a fast GEMM on the CPU (`cpu/JOURNEY.md`). Now bring it to the GPU with
-WebGPU compute shaders (WGSL), running on Metal through `wgpu-native`. Every CPU
-optimization has a direct GPU analogue — you will recognise each step.
+You already know how to optimize GEMM on CPU. Now do it on the GPU with WGSL (WebGPU). Same concepts, different syntax. Shared memory is your L1 cache. Register tiles are your micro-kernels. Double buffering is prefetch.
 
-The harness is already written for you (`benchmark/gpu_gemm.cpp`), exactly like the
-CPU bench/test were. It uploads A and B, runs a WGSL shader, reads C back, and
-**checks it against a CPU reference**. You write the shaders.
+The harness is already written (`benchmark/gpu_gemm.cpp`). It runs your shader, reads the result, and checks it against a CPU reference. If your kernel computes wrong or you write zeros on purpose (the stubs do), the harness tells you: `FAIL`. Once it says `ok`, you're correct. Then optimize for GFLOPS.
 
-**Rules** (same as the CPU journey)
-- Write the WGSL yourself before reading the explanation.
-- Record your real numbers in each "Your Numbers" table.
-- A level is done when the harness prints `ok` for your shader and it is faster
-  than the previous level.
+**Rules** (same as CPU)
+- Write the WGSL yourself. Read the explanation after.
+- Measure your actual numbers.
+- `ok` means correct; faster than the last level means you're winning.
 
-**How to build and run**
+**Build:**
 ```bash
 cmake --build build --target gpu_gemm
-# default: runs the provided naive reference
-./build/gpu_gemm
-# run specific shaders (naive + your tiled kernel) and compare:
+./build/gpu_gemm                   # runs the provided reference
 ./build/gpu_gemm src/kernels/gemm/gemm_naive.wgsl src/kernels/gemm/gemm_tiled_16x16.wgsl
 ```
 
-The shaders live in `src/kernels/gemm/`. The provided `gemm_naive.wgsl` works and
-matches the reference; the others are stubs that write zeros (so they FAIL) until
-you implement them.
+The stubs intentionally write zeros so they fail. That's the check that your kernel is actually computing something.
 
-**A note on the numbers.** The reported seconds include submit + readback, not
-just kernel time — fine for comparing shaders and watching the trend, but not an
-absolute kernel benchmark. Isolating kernel time with **GPU timestamp queries** is
-itself an exercise (G7). And a failing (zero-writing) stub prints `—` for GFLOPS,
-because timing a kernel that computes nothing is meaningless.
+**Timing note:** The harness reports wall-clock (submit + readback). That's fine for comparing shaders to each other and watching the trend. Getting the *kernel time* alone needs GPU timestamps — that's L7's job.
 
 ---
 
-## The CPU → GPU mapping (your roadmap)
+## CPU ↔ GPU: it's the same problem, different hardware
 
-| CPU (what you built)         | GPU / WGSL equivalent              | Level |
-|------------------------------|------------------------------------|-------|
-| naive triple loop (L1)       | one invocation per C element       | G2    |
-| loop reorder / coalescing    | thread→element mapping, coalesced  | G3    |
-| cache blocking (L5)          | workgroup shared-memory tiling     | G4    |
-| register micro-kernel (L9)   | per-invocation register tile       | G5    |
-| prefetch / pipelining (L10)  | double-buffered shared memory      | G6    |
-| autotuning (L12)             | tune workgroup/tile sizes          | G7    |
-| Accelerate / MLX ceiling     | MLX (Metal) matmul ceiling         | G8    |
+Everything you did on CPU translates directly:
+
+| CPU | GPU | You'll do this at level |
+|-----|-----|-------------------------|
+| naive loop | one GPU thread per output | G2 |
+| loop reorder (coalesce memory) | arrange threads so they coalesce | G3 |
+| L1 cache blocking | shared memory (GPU's L1) | G4 |
+| register tile + micro-kernel | each thread computes a small tile | G5 |
+| prefetch ahead | double-buffer shared memory | G6 |
+| tune block sizes | tune workgroup + tile size | G7 |
+| Accelerate ceiling | MLX Metal ceiling | G8 |
+
+Same algorithm, two machines.
 
 ---
 ---
