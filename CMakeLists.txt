@@ -39,7 +39,7 @@ target_include_directories(gpu_gemm PRIVATE
         ${CMAKE_SOURCE_DIR}/external/wgpu-native/include
 )
 target_compile_definitions(gpu_gemm PRIVATE
-        WGPUBLAS_SHADER_DIR="${CMAKE_SOURCE_DIR}/src/kernels/gemm"
+        WGPUBLAS_SHADER_DIR="${CMAKE_SOURCE_DIR}/gpu/src/kernels/gemm"
 )
 target_link_libraries(gpu_gemm PRIVATE ${WGPU_LIBS})
 
