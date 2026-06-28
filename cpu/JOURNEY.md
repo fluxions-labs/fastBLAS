@@ -1,24 +1,20 @@
-# cpu-blas: The GEMM Journey
+# The GEMM Journey — CPU
 
-You are building a BLAS-style single-precision GEMM from scratch, level by level.
-Each level is a problem. Read the problem. Close this file. Write the code. Run the numbers.
-Only open the "Why it works" section after your numbers are on paper.
+You're going to write a matrix multiply (GEMM) that goes from embarrassingly slow (~2 GFLOPS) to actually fast (~100 GFLOPS on M1). Each level adds one insight. Read the problem, write the code, measure it, *then* read why it worked.
 
-The goal is to go from ~2 GFLOPS (what a student writes) to ~100+ GFLOPS (what a serious
-library achieves), understanding every step in between.
+**The deal:**
+- Write the code yourself. No peeking at the "Why it works" first.
+- Measure on your machine. Record the actual numbers in the tables.
+- Don't move on until the test passes. No exceptions.
 
-**Rules**
-- Write the code yourself before reading the explanation.
-- Record your actual measured numbers in the "Your Numbers" table.
-- Do not move to the next level until the test passes and you have real numbers.
-
-**How to build and run**
+**Build:**
 ```bash
-cd cmake-build-debug
-ninja bench_gemm test_gemm
-./cpu/test_gemm
-./cpu/bench_gemm
+cmake build && cmake --build build --target test_gemm bench_gemm
+./build/cpu/test_gemm
+./build/cpu/bench_gemm
 ```
+
+The baseline: a naive triple loop gets ~2 GFLOPS. Apple's Accelerate hits ~1200 GFLOPS. Everything in between is you closing that gap by understanding why the gap exists.
 
 ---
 
@@ -91,16 +87,13 @@ Before reading the explanation below, answer these in your head:
 
 ## Why It Works (read AFTER you have numbers)
 
-The formula is `2*M*N*K` FLOPs — one multiply and one add per `(i,j,k)` triple.
+You do `2*M*N*K` FLOPs total — one multiply and one add for each `(i,j,k)` triple.
 
-The innermost loop over `k` accesses:
-- `A[i * lda + k]` — `k` increments, so this is **sequential** (good)
-- `B[k * ldb + j]` — `k` increments by `ldb` (= N) floats between elements, so this is **strided** (bad)
+The catch: look at how you access B. In the innermost loop, you jump `N` floats forward every iteration. That's a stride. Your CPU cache line is 64 bytes = 16 floats. On a 1024×1024 matrix, you're jumping way outside that line every time. Basically, every B access misses. You hit DRAM 1 billion times. That's why it's slow.
 
-Every access to B in the innermost loop jumps N×4 bytes forward — a cache miss every time for
-large matrices. This is why GFLOPS drop as the matrix grows: you hit the memory wall.
+A lives in memory too, but you walk through it sequentially — one element after another. That's the only thing the CPU can prefetch. B's stride kills you.
 
-**Expected baseline:** 1–3 GFLOPS on M1 Air (depending on matrix size).
+**Typical result:** 1–3 GFLOPS on M1 (smaller matrices are slower because the overhead is bigger relative to the compute time).
 
 ---
 ---
@@ -162,21 +155,18 @@ Before writing the code, think:
 
 ## Why It Works (read AFTER you have numbers)
 
-The winning order is **i → k → j**.
+The magic order is **i → k → j**.
 
-With `k` in the middle and `j` innermost, the inner loop body becomes:
-```cpp
-C[i*ldc + j] += A[i*lda + k] * B[k*ldb + j];
-```
-Now:
-- `A[i*lda + k]` — `k` changes (middle loop), `i` fixed. A is loaded once per middle iteration, reused N times across the inner j loop.
-- `B[k*ldb + j]` — `j` changes (innermost). Sequential. Cache-friendly.
-- `C[i*ldc + j]` — `j` changes. Sequential. Cache-friendly.
+Rearrange the loops so `j` is the innermost. Now:
+- You load one element from A (`A[i,k]`)
+- You multiply it by N elements from B (`B[k, j=0..N]`)
+- All those B elements are sequential in memory
 
-Three sequential streams in the inner loop instead of one sequential + one strided.
-The hardware prefetcher can now predict and prefetch all three.
+The CPU sees this: walk down a row of B, sequentially, 1000 times. It prefetches the next cache line automatically. You just made all three arrays (A, B, C) stream sequentially through the inner loop. No more jumps in B.
 
-**Expected speedup:** 3–6× over naive for large matrices.
+This is literally the same computation, just reordered. The CPU can now predict your access pattern and load the data before you need it. Prefetch wins.
+
+**Typical speedup:** 3–6×. Sometimes more on big matrices, sometimes less depending on the prefetcher and cache layout.
 
 ---
 ---
@@ -427,30 +417,15 @@ Record what happens:
 
 ## Why It Works (read AFTER you have numbers)
 
-Without blocking, the working set for a 1024×1024 GEMM is 3 × 1024² × 4 bytes = 12 MB.
-The M1 L1 cache is 64 KB. L2 is 4 MB. The data does not fit — you are constantly evicting
-and reloading.
+Without blocking: A 1024×1024 GEMM is 3 matrices × 1M floats each = 12 MB of data. Your L1 cache is 64 KB. You keep evicting and reloading the same data over and over.
 
-With blocking (MC=KC=NC=64):
-- Active tile of A: 64×64×4 = 16 KB
-- Active tile of B: 64×64×4 = 16 KB
-- Active tile of C: 64×64×4 = 16 KB
-- Total: 48 KB — fits in L1.
+With blocking (say, 64×64 tiles): you process the problem in chunks. Each chunk is 3 × 64² = 48 KB. That *fits* in L1 and stays there. You do 262k FLOPs on that 48 KB before you move to the next tile. That's ~5.5 FLOPs per byte of data you load. Compare that to naive (0.25 FLOPs/byte) — you're reusing the same data way more.
 
-Within the innermost `ic` loop, A's MC×KC tile and B's KC×NC tile stay resident in L1.
-You do MC×NC×KC = 64³ = 262,144 FLOPs on 48 KB of data.
-Arithmetic intensity = 262144 FLOPs / 48000 bytes ≈ 5.5 FLOP/byte.
-M1's L1 bandwidth is ~500 GB/s. 5.5 FLOP/byte × 500 GB/s ≈ 2.75 TFLOPS theoretical.
-You will not hit that (micro-kernel is still scalar) but this removes the memory wall.
+Pick tile sizes that fit your L1 (too big and you start missing, too small and overhead kills you). For M1, 64 is sweet.
 
-Choosing block sizes:
-- Too small: too many cache misses at the boundary, low FLOP density per tile.
-- Too large: tiles spill out of the target cache level, evicting each other.
-- Sweet spot: tiles together fill but do not exceed the target cache (L1 or L2).
+This is called the Goto algorithm — it's what OpenBLAS and BLIS do. The rest is just making the inner loop faster. You've fixed the biggest problem (the memory wall).
 
-This is the Goto algorithm. Everything from here is making the inner kernel faster.
-
-**Expected speedup:** 3–8× over Level 4 for large matrices.
+**Typical speedup:** 3–8×. Bigger matrices benefit more because blocking fixes the size-dependent slowdown.
 
 ---
 ---
@@ -752,15 +727,15 @@ This is the exact structure of OpenBLAS, BLIS, and Eigen's GEMM.
 
 # Advanced Track (Levels 9–14)
 
-Levels 1–8 took you from a naive loop to a blocked, packed, vectorised, threaded
-kernel — the full skeleton of a production BLAS. The advanced track is about
-**closing the gap to the machine's peak** and **understanding why a real library
-is shaped the way it is**. Same rules: write the kernel yourself, record real
-numbers, read the explanation last.
+You've built the basics — from a naive loop to blocked, packed, vectorized. Now you're chasing the last bit of performance. At this level, the wins are small (5–15%), the measurement gets noisy, and you need discipline to not get lost in micro-optimization.
 
-A note on measuring from here on: the wins get smaller and noisier. Pin the
-problem size large (≥1024), take the *best of many* runs, and watch GFLOPS — not
-seconds. A 3% regression is real now; don't chase it past the noise floor.
+A few rules for this section:
+- Use large matrices (1024+). A 256³ kernel is too small; noise drowns the real win.
+- Take the *best* of 10 runs, not the average. One thermal throttle ruins everything.
+- Watch GFLOPS, not seconds. A 1% speedup is 0.05 seconds on a 5-second run — noise.
+- Don't fall into the optimization rabbit hole. If it's a 2% win and takes 3 days to implement, it's not worth it.
+
+Everything from here is understanding why Apple Accelerate hits ~1200 GFLOPS and figuring out exactly which hardware limitation stops you.
 
 ---
 ---
@@ -832,23 +807,17 @@ of MR/NR) with a scalar fallback.
 
 ## Why It Works (read AFTER you have numbers)
 
-A single FMA has latency (~4 cycles on Apple cores) but the core can *issue* 2
-per cycle. To keep both FMA ports busy you need ≥ `2 ports × 4 cycles = 8`
-independent FMA chains in flight. A 4×4 tile gives you 4 accumulators — only 4
-chains — so the ports idle half the time. An 8×8 tile gives 16 chains: enough to
-fully cover the latency and saturate both ports.
+An FMA takes ~4 cycles to produce a result (latency). But your M1 has 2 FMA units, so it can *start* 2 FMAs per cycle. To not idle, you need 8 independent FMA chains (4 cycles × 2 units) in flight at all times.
 
-The limit is registers. 16 accumulators + a few operand registers fits inside 32.
-Push to 12×12 (36 accumulators) and the compiler *spills* to the stack — every
-spill is a load/store that defeats the purpose. The sweet spot (8×8, 8×12) is
-exactly where real ARM micro-kernels live, and it is dictated by the register file
-size, not by the algorithm.
+Level 7's 4×4 tile gives you 4 accumulators. That's only 4 chains. The FMA units see empty slots waiting for data. That's wasted compute.
 
-`vfmaq_lane_f32` folds the broadcast into the FMA, so each k-iteration is pure
-load + FMA with no shuffle overhead. This is the single most important kernel in
-the whole library — everything else exists to feed it.
+An 8×8 tile gives 16 accumulators. Now you can keep way more chains in flight, way more often. Both ports stay busy.
 
-**Expected:** 1.3–2× over Level 7; 40–80+ GFLOPS single-threaded on M1.
+Why not 16×16? Registers. M1 has 32 float registers. 16 accumulators takes half. Add a few for operands, and you're at the limit. Go to 12×12 (36 accumulators) and the compiler spills to memory — every spill is a load/store that kills your FLOP rate. The sweet spot (8×8 or 8×12) is hardware-dictated, not algorithm-dictated.
+
+Also: `vfmaq_lane_f32` is beautiful here. It multiplies a vector by one element of another vector in a single instruction (no separate broadcast). Every FMA in the inner loop is pure math, no shuffle overhead.
+
+**Realistic gain:** 1.3–2×. If you nail the implementation, 40–80+ GFLOPS single-threaded.
 
 ---
 ---
@@ -1009,23 +978,15 @@ Sweep the block sizes (record the best 1024³ for each):
 
 ## Why It Works (read AFTER you have numbers)
 
-Each cache level has a size and a bandwidth. The 5-loop assigns each operand the
-cache level whose capacity it fits and whose bandwidth it needs:
+The whole idea: assign each piece of data to the cache level where it lives best.
 
-- **Packed B (`KC×NC`)** is streamed by every micro-kernel call across the entire
-  `ic` loop — huge reuse — so it is packed once and parked in L2/L3.
-- **Packed A (`MC×KC`)** is reused across the `jr` loop (every column micro-tile),
-  so it is packed once per `(ic,kc)` and parked in L2.
-- The **active A strip (`MR×KC`)** and **B strip (`KC×NR`)** are what the
-  micro-kernel actually touches each call — sized for L1.
+- B's packed tile (`KC×NC`) is used by every row of A (`MC` tiles wide). Reuse it across the entire `ic` loop. Pack it once, leave it in L2/L3.
+- A's packed tile (`MC×KC`) is used by every column of B. Reuse it across the `jr` steps. Pack it once per `(ic,kc)`, leave it in L2.
+- The active micro-tile (`MR×KC` from A, `KC×NR` from B) is what the inner loop touches. Size it for L1.
 
-Because every operand is resident at the right level *before* the micro-kernel
-needs it, GFLOPS no longer depends on matrix size: a 4096³ GEMM runs at the same
-rate as 1024³. That size-independence is the defining property of a real BLAS, and
-it is why `cblas_sgemm` doesn't fall off a cliff the way your Level 1 did.
+Do this and your GFLOPS *stops* depending on matrix size. A 4096³ GEMM runs as fast as 1024³ because the data stays resident at the right cache level. That flatness is what a real BLAS looks like. Accelerate is flat. Your Level 5 (single-level blocking) fell off a cliff. This one doesn't.
 
-**Expected:** matches or slightly beats Level 9 at 1024³, but — crucially — holds
-that rate at 2048³ and 4096³ where the single-level blocked kernel decays.
+**Expected:** same speed or slightly faster than Level 9 at 1024³. But now 2048³ and 4096³ stay flat. That flatness is the win.
 
 ---
 ---
