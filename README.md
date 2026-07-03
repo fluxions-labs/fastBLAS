@@ -19,9 +19,6 @@ Implemented
 * L1 — naive GEMM
 * L2 — loop reordering
 * L3 — register accumulation
-
-Remaining
-
 * L4 — micro-kernel
 * L5 — cache blocking
 * L6 — packing
