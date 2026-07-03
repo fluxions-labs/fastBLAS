@@ -1,94 +1,122 @@
+
+
 # fastBLAS
 
-Learning how to write a fast matrix multiply from scratch. Started on CPU with Apple M1/NEON, now extending to GPU with WebGPU.
+Learning GEMM optimization from first principles.
 
-The whole point: you write each kernel yourself. Read the problem, implement it, measure it, *then* read why it works. Don't skip ahead.
+The repository starts with a scalar CPU implementation and builds toward cache-blocked, vectorized kernels. A parallel GPU track implements the same ideas in WGSL using WebGPU.
 
-## Two tracks
+Every optimization is implemented as a separate kernel so performance and correctness can be measured independently.
 
-**CPU track** — `cpu/JOURNEY.md` — goes from a naive 2 GFLOPS triple loop to 100+ GFLOPS via cache blocking, vectorization, register optimization, and all the micro-optimization tricks.
+## CPU
 
-- **Done:** Levels 1–3 (naive, reorder, register accumulate)
-- **Stubbed:** Levels 4–8 (micro-kernel, blocking, packing, NEON, OpenMP)
-- **Stubbed:** Levels 9–14 (wide kernels, prefetch, full BLIS 5-loop, autotuning, Strassen, roofline)
+`cpu/JOURNEY.md`
 
-**GPU track** — `gpu/JOURNEY_GPU.md` — same concepts but in WGSL. Shared memory = CPU cache. Register tiles = GPU register reuse. Double-buffering = prefetch.
+Progression from a naive triple loop to a blocked, vectorized GEMM.
 
-- **Working:** harness + provided naive reference (~85 GFLOPS on M1)
-- **Stubbed:** G3–G8 (coalescing, shared tiling, register tiling, double buffering, tuning)
+Implemented
 
-## Build & run
+* L1 — naive GEMM
+* L2 — loop reordering
+* L3 — register accumulation
+
+Remaining
+
+* L4 — micro-kernel
+* L5 — cache blocking
+* L6 — packing
+* L7 — NEON vectorization
+* L8 — OpenMP
+* L9–L14 — wider kernels, prefetching, BLIS 5-loop structure, autotuning, Strassen, roofline analysis
+
+## GPU
+
+`gpu/JOURNEY_GPU.md`
+
+The GPU track mirrors the CPU progression using WGSL.
+
+Implemented
+
+* benchmark harness
+* naive reference kernel
+
+Remaining
+
+* G3 — coalesced access
+* G4 — shared-memory tiling
+* G5 — register tiling
+* G6 — double buffering
+* G7–G8 — parameter tuning
+
+## Build
 
 ```bash
-cmake build
+cmake -B build
 cmake --build build --target test_gemm bench_gemm gpu_gemm
 ```
 
-CPU tests:
+CPU
+
 ```bash
-./build/cpu/test_gemm              # should print ALL TESTS PASSED
-./build/cpu/bench_gemm             # shows L1-L3 + Apple Accelerate ceiling
+./build/cpu/test_gemm
+./build/cpu/bench_gemm
 ```
 
-GPU shaders:
+GPU
+
 ```bash
-./build/gpu_gemm                   # runs the provided reference
-./build/gpu_gemm src/kernels/gemm/gemm_tiled_16x16.wgsl  # run your stub
+./build/gpu_gemm
+./build/gpu_gemm src/kernels/gemm/gemm_tiled_16x16.wgsl
 ```
 
-GPU stubs will print `FAIL` until you implement them (they write zeros on purpose — the harness checks that).
+## Repository layout
 
-## What's where
+```text
+cpu/
+├── JOURNEY.md
+├── include/blas.h
+├── src/
+├── benchmark/
+└── test/
 
+gpu/
+├── JOURNEY_GPU.md
+└── src/kernels/gemm/
+
+benchmark/
+└── gpu_gemm.cpp
 ```
-cpu/JOURNEY.md               — the problems and explanations
-cpu/include/blas.h           — function signatures
-cpu/src/level3/              — your kernels go here
-cpu/benchmark/bench_gemm.cpp — timing harness (auto-finds Accelerate, MLX)
-cpu/test/test_gemm.cpp       — correctness check
 
-gpu/JOURNEY_GPU.md           — GPU curriculum
-gpu/src/kernels/gemm/
-  ├── gemm_naive.wgsl        — reference (provided)
-  ├── gemm_tiled_*.wgsl      — your stubs
-benchmark/gpu_gemm.cpp       — runs shaders, checks vs CPU
-```
+## Workflow
 
-## How to use this
+1. Read the next level.
+2. Implement the kernel.
+3. Verify correctness.
+4. Benchmark.
+5. Compare against the reference implementation.
 
-1. Open `cpu/JOURNEY.md` or `gpu/JOURNEY_GPU.md`
-2. Read the problem. Don't look at the explanation yet.
-3. Write the kernel (`.cpp` or `.wgsl`)
-4. Record your actual measured numbers
-5. Read the explanation to see why it worked (or didn't)
+## Topics
 
-That's it. Repeat for each level.
+* cache locality
+* register blocking
+* SIMD
+* memory bandwidth
+* instruction-level parallelism
+* shared memory
+* arithmetic intensity
+* roofline analysis
 
-## Why this works
+## Target platform
 
-Optimizing GEMM teaches you:
-- memory hierarchy (L1/L2 cache, bandwidth, latency)
-- instruction-level parallelism (FMA chains, register pressure)
-- data movement (coalescing, cache lines, shared memory)
-- when to stop optimizing (roofline, arithmetic intensity)
+**CPU:** Apple M1 (NEON)
 
-All of these show up in every performance-critical code you'll ever write.
+**GPU:** Metal through WebGPU (`wgpu-native`)
 
-## Target: M1 + Metal
+Performance is compared against Apple Accelerate and MLX, which use AMX hardware unavailable to NEON or WGSL kernels.
 
-CPU: Apple M1 NEON (32 registers, 2 FMA/cycle, ~2.6 peak GFLOPS)
-GPU: Metal via wgpu-native (you'll hit ~85 GFLOPS naive, ~200+ with tiling)
+## Current status
 
-Accelerate and MLX are the ceiling — they use AMX (the matrix coprocessor you can't access from NEON/WGSL). See how close you can get.
+* CPU: L1–L3 complete
+* GPU: benchmark harness and naive kernel complete
+* Remaining levels are provided as implementation stubs.
 
-## Status
-
-- L1–L3 done and measured
-- L4–L14 ready for you to implement
-- GPU harness working, naive reference ~85 GFLOPS, stubs ready
-
-Pick L4 on CPU or G3 on GPU and go.
-
----
-
-Built on [how-to-optimize-gemm](https://github.com/flame/how-to-optimize-gemm).
