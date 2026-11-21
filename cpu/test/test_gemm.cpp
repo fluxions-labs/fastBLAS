@@ -62,20 +62,37 @@ int main() {
     all_pass &= check("sgemm_reg", sgemm_reg, 128,  256,  64);
     all_pass &= check("sgemm_reg", sgemm_reg, 256, 256, 256);
 
-    // ── Uncomment each block as you implement the level ───────────────────────
-    // Use non-square and edge sizes (e.g. 130×255×97) for the tiled/micro kernels
-    // so you exercise the tail/remainder paths.
-    //
-    // all_pass &= check("sgemm_1x4",      sgemm_1x4,      130, 255, 97);
-    // all_pass &= check("sgemm_block",    sgemm_block,    130, 255, 97);
-    // all_pass &= check("sgemm_packed",   sgemm_packed,   130, 255, 97);
-    // all_pass &= check("sgemm_neon",     sgemm_neon,     130, 255, 97);
-    // all_pass &= check("sgemm_omp",      sgemm_omp,      130, 255, 97);
-    // all_pass &= check("sgemm_micro",    sgemm_micro,    130, 255, 97);  // L9
-    // all_pass &= check("sgemm_pipe",     sgemm_pipe,     130, 255, 97);  // L10
-    // all_pass &= check("sgemm_blis",     sgemm_blis,     130, 255, 97);  // L11
-    // all_pass &= check("sgemm_tuned",    sgemm_tuned,    130, 255, 97);  // L12
-    // all_pass &= check("sgemm_strassen", sgemm_strassen, 512, 512, 512); // L14 (looser tol)
+    // Non-square and edge sizes exercise the tail/remainder paths of the
+    // tiled/micro kernels.
+    printf("── Level 4: sgemm_1x4 ───────────────────────────────────────────\n");
+    all_pass &= check("sgemm_1x4", sgemm_1x4, 130, 255, 97);
+
+    printf("── Level 5: sgemm_block ─────────────────────────────────────────\n");
+    all_pass &= check("sgemm_block", sgemm_block, 130, 255, 97);
+
+    printf("── Level 6: sgemm_packed ────────────────────────────────────────\n");
+    all_pass &= check("sgemm_packed", sgemm_packed, 130, 255, 97);
+
+    printf("── Level 7: sgemm_neon ──────────────────────────────────────────\n");
+    all_pass &= check("sgemm_neon", sgemm_neon, 130, 255, 97);
+
+    printf("── Level 8: sgemm_omp ───────────────────────────────────────────\n");
+    all_pass &= check("sgemm_omp", sgemm_omp, 130, 255, 97);
+
+    printf("── Level 9: sgemm_micro ─────────────────────────────────────────\n");
+    all_pass &= check("sgemm_micro", sgemm_micro, 130, 255, 97);
+
+    printf("── Level 10: sgemm_pipe ─────────────────────────────────────────\n");
+    all_pass &= check("sgemm_pipe", sgemm_pipe, 130, 255, 97);
+
+    printf("── Level 11: sgemm_blis ─────────────────────────────────────────\n");
+    all_pass &= check("sgemm_blis", sgemm_blis, 130, 255, 97);
+
+    printf("── Level 12: sgemm_tuned ────────────────────────────────────────\n");
+    all_pass &= check("sgemm_tuned", sgemm_tuned, 130, 255, 97);
+
+    printf("── Level 14: sgemm_strassen ─────────────────────────────────────\n");
+    all_pass &= check("sgemm_strassen", sgemm_strassen, 512, 512, 512);
 
     printf("\n%s\n", all_pass ? "ALL TESTS PASSED" : "SOME TESTS FAILED");
     return all_pass ? 0 : 1;

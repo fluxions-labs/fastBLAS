@@ -7,19 +7,19 @@ add_library(cpu_blas STATIC
     src/level3/gemm_reorder.cpp
     src/level3/gemm_reg.cpp
 
-    # ── Levels 4–8 (uncomment each as you implement it) ───────────────────────
-    # src/level3/gemm_1x4.cpp        # L4  — 1×4 micro-kernel
-    # src/level3/gemm_block.cpp      # L5  — cache blocking
-    # src/level3/gemm_packed.cpp     # L6  — packing
-    # src/level3/gemm_neon.cpp       # L7  — NEON 4×4   (needs the NEON flags below)
-    # src/level3/gemm_omp.cpp        # L8  — OpenMP     (needs OpenMP, see below)
+    # ── Levels 4–8 ─────────────────────────────────────────────────────────────
+    src/level3/gemm_1x4.cpp        # L4  — 1×4 micro-kernel
+    src/level3/gemm_block.cpp      # L5  — cache blocking
+    src/level3/gemm_packed.cpp     # L6  — packing
+    src/level3/gemm_neon.cpp       # L7  — NEON 4×4   (needs the NEON flags below)
+    src/level3/gemm_omp.cpp        # L8  — OpenMP     (needs OpenMP, see below)
 
     # ── Levels 9–14 (advanced track) ──────────────────────────────────────────
-    # src/level3/gemm_micro.cpp      # L9  — wide 8×8 / 8×12 micro-kernel (NEON flags)
-    # src/level3/gemm_pipe.cpp       # L10 — prefetch + pipelining        (NEON flags)
-    # src/level3/gemm_blis.cpp       # L11 — Goto/BLIS 5-loop             (NEON flags)
-    # src/level3/gemm_tuned.cpp      # L12 — autotuned dispatch
-    # src/level3/gemm_strassen.cpp   # L14 — one-level Strassen
+    src/level3/gemm_micro.cpp      # L9  — wide 8×8 / 8×12 micro-kernel (NEON flags)
+    src/level3/gemm_pipe.cpp       # L10 — prefetch + pipelining        (NEON flags)
+    src/level3/gemm_blis.cpp       # L11 — Goto/BLIS 5-loop             (NEON flags)
+    src/level3/gemm_tuned.cpp      # L12 — autotuned dispatch
+    src/level3/gemm_strassen.cpp   # L14 — one-level Strassen
 )
 
 target_include_directories(cpu_blas PUBLIC include)
@@ -33,18 +33,31 @@ target_compile_options(cpu_blas PRIVATE
     -march=armv8-a          # M1 baseline without SVE/dotprod extras
 )
 
-# ── Per-file NEON flags (Levels 7, 9, 10, 11) ─────────────────────────────────
+# ── Per-file NEON flags (Levels 7, 9, 10, 11, 12, 14) ─────────────────────────
 # The vectorised kernels need NEON + fp16 + dotprod and must NOT be built with
-# -fno-tree-vectorize.  Uncomment the matching line when you add each source.
-# set(NEON_FLAGS -O3 -march=armv8.2-a+fp16+dotprod)
-# set_source_files_properties(src/level3/gemm_neon.cpp  PROPERTIES COMPILE_OPTIONS "${NEON_FLAGS}")
-# set_source_files_properties(src/level3/gemm_micro.cpp PROPERTIES COMPILE_OPTIONS "${NEON_FLAGS}")
-# set_source_files_properties(src/level3/gemm_pipe.cpp  PROPERTIES COMPILE_OPTIONS "${NEON_FLAGS}")
-# set_source_files_properties(src/level3/gemm_blis.cpp  PROPERTIES COMPILE_OPTIONS "${NEON_FLAGS}")
+# -fno-tree-vectorize.
+set(NEON_FLAGS -O3 -march=armv8.2-a+fp16+dotprod)
+set_source_files_properties(src/level3/gemm_neon.cpp      PROPERTIES COMPILE_OPTIONS "${NEON_FLAGS}")
+set_source_files_properties(src/level3/gemm_omp.cpp       PROPERTIES COMPILE_OPTIONS "${NEON_FLAGS}")
+set_source_files_properties(src/level3/gemm_micro.cpp     PROPERTIES COMPILE_OPTIONS "${NEON_FLAGS}")
+set_source_files_properties(src/level3/gemm_pipe.cpp      PROPERTIES COMPILE_OPTIONS "${NEON_FLAGS}")
+set_source_files_properties(src/level3/gemm_blis.cpp      PROPERTIES COMPILE_OPTIONS "${NEON_FLAGS}")
+set_source_files_properties(src/level3/gemm_tuned.cpp     PROPERTIES COMPILE_OPTIONS "${NEON_FLAGS}")
+set_source_files_properties(src/level3/gemm_strassen.cpp  PROPERTIES COMPILE_OPTIONS "-O3")
 
 # ── OpenMP (Level 8) ──────────────────────────────────────────────────────────
-# find_package(OpenMP REQUIRED)
-# target_link_libraries(cpu_blas PUBLIC OpenMP::OpenMP_CXX)
+# AppleClang ships without OpenMP support; homebrew's libomp provides it but
+# needs explicit hints since FindOpenMP can't detect it standalone on macOS.
+if(APPLE AND NOT OpenMP_CXX_FOUND)
+    execute_process(COMMAND brew --prefix libomp OUTPUT_VARIABLE LIBOMP_PREFIX OUTPUT_STRIP_TRAILING_WHITESPACE)
+    if(LIBOMP_PREFIX)
+        set(OpenMP_CXX_FLAGS "-Xpreprocessor -fopenmp -I${LIBOMP_PREFIX}/include")
+        set(OpenMP_CXX_LIB_NAMES "omp")
+        set(OpenMP_omp_LIBRARY "${LIBOMP_PREFIX}/lib/libomp.dylib")
+    endif()
+endif()
+find_package(OpenMP REQUIRED COMPONENTS CXX)
+target_link_libraries(cpu_blas PUBLIC OpenMP::OpenMP_CXX)
 
 # ── bench_gemm ────────────────────────────────────────────────────────────────
 add_executable(bench_gemm benchmark/bench_gemm.cpp)
